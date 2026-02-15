@@ -1,118 +1,129 @@
 # Yolov8-Mind2S (Intel CPU/GPU/NPU + optional NVIDIA CUDA)
 
-This is a refreshed, **Khadas Mind 2S–optimized** version of your YOLOv8 webcam demo repo.
+This repo is a Khadas **Mind 2S–optimized** YOLOv8 webcam demo with:
 
-It keeps the original “pick classes + run webcam detection” workflow, but adds:
 - **Intel OpenVINO acceleration** for **intel:cpu / intel:gpu / intel:npu**
 - Optional **NVIDIA CUDA** acceleration (eGPU / discrete GPU)
-- A faster capture loop (threaded) + FPS overlay
-- A simple **web MJPEG stream** (FastAPI/Uvicorn)
+- Threaded capture + FPS overlay
+- Interactive menu UI + CLI mode
+- Optional **web MJPEG stream** (FastAPI/Uvicorn)
 - A quick **device benchmark** tool
 
-> Intel AI PCs combine CPU+GPU+NPU, and OpenVINO is the standard way to run/optimize models across those engines. citeturn8view0
+> If you want **Intel Arc (iGPU)** or **NPU** acceleration, install OpenVINO + the proper Intel drivers.
 
-## What you get
+---
 
-**Interactive mode (closest to your original repo):**
-- choose device
-- choose model
-- choose classes (numbers / ranges / ALL)
-- fullscreen display
-- optional save MP4 + JSONL detections
+## Windows 11 (Anaconda) quick start (Mind 2S)
 
-**CLI mode:**
-- same features, but scripted via flags
+### 1) Create and activate the conda environment
 
-**Web mode:**
-- open a browser to view the annotated camera stream
+Open **Anaconda Prompt**:
 
-## Quick start (Ubuntu on Mind 2S)
+```bat
+conda create -n envYolo python=3.11 -y
+conda activate envYolo
+```
+
+### 2) Get the repo
+
+**Option A (Git):**
+```bat
+cd %USERPROFILE%\AI
+git clone https://github.com/KD5VMF/Yolov8-Mind2S.git
+cd Yolov8-Mind2S
+```
+
+**Option B (ZIP):**
+- Download the repo ZIP from GitHub
+- Extract it to: `%USERPROFILE%\AI\Yolov8-Mind2S`
+- `cd` into that folder
+
+### 3) Install Python dependencies
+
+```bat
+python -m pip install -U pip
+pip install -r requirements.txt
+```
+
+### 4) Intel CPU/GPU/NPU (OpenVINO) acceleration (recommended)
+
+```bat
+pip install -r requirements-openvino.txt
+python -c "import openvino as ov; print('OpenVINO devices:', ov.Core().available_devices)"
+```
+
+If you **don’t** see `GPU` and/or `NPU` in that list, install the latest Mind 2S Intel drivers package and reboot.
+
+### 5) Run (Interactive UI)
+
+```bat
+python yolo_interactive.py
+```
+
+Pick one of:
+- `intel:npu` (fast/efficient, best when available)
+- `intel:gpu` (Intel Arc iGPU)
+- `cuda:0` (NVIDIA GPU, if present)
+- `cpu`
+
+---
+
+## Ubuntu quick start (Mind 2S)
 
 ```bash
-git clone <YOUR_NEW_REPO_URL>
+git clone https://github.com/KD5VMF/Yolov8-Mind2S.git
 cd Yolov8-Mind2S
 ./scripts/setup_mind2s_ubuntu.sh
 ./scripts/run_interactive.sh
 ```
 
-### Intel GPU / NPU acceleration (OpenVINO)
-
-Install the OpenVINO runtime:
+Then for Intel OpenVINO:
 
 ```bash
 source ~/envYoloMind2S/bin/activate
 pip install -r requirements-openvino.txt
 ```
 
-**Important (NPU):** OpenVINO’s NPU plugin requires an **NPU driver** to be installed on the system. citeturn8view1  
-(The OpenVINO docs link to the current Linux/Windows driver installers. citeturn8view1)
-
-### NVIDIA CUDA (optional)
-
-If you have an NVIDIA GPU attached (like your RTX 3060 eGPU), install a CUDA-enabled PyTorch build and then run with `--device cuda:0`.
-(PyTorch’s install command depends on your exact CUDA version.)
+---
 
 ## Run modes
 
-### 1) Interactive (menu UI)
+### Interactive (menu UI)
 
 ```bash
-source ~/envYoloMind2S/bin/activate
 python ./yolo_interactive.py
 ```
 
-### 2) CLI (scriptable)
+### CLI (scriptable)
 
 List devices:
-
 ```bash
-source ~/envYoloMind2S/bin/activate
 python ./yolo_detect.py --list-devices
 ```
 
-Run webcam, Intel NPU, export INT8 if needed:
-
+Intel NPU:
 ```bash
 python ./yolo_detect.py --source 0 --device intel:npu --model yolov8x.pt --prefer-int8-on-npu --fullscreen
 ```
 
-Run webcam, Intel GPU:
-
+Web MJPEG stream:
 ```bash
-python ./yolo_detect.py --source 0 --device intel:gpu --model yolov8x.pt --fullscreen
-```
-
-Run webcam, NVIDIA CUDA:
-
-```bash
-python ./yolo_detect.py --source 0 --device cuda:0 --model yolov8x.pt --half --fullscreen
-```
-
-Save outputs:
-
-```bash
-python ./yolo_detect.py --source 0 --device auto --save-video --save-json --out-dir runs
-```
-
-### 3) Web MJPEG stream
-
-```bash
-source ~/envYoloMind2S/bin/activate
 python ./yolo_web.py --host 0.0.0.0 --port 8000 --device auto --source 0 --model yolov8x.pt
 ```
 
-Then open: `http://<server-ip>:8000/`
-
-### 4) Quick benchmark
-
+Quick benchmark:
 ```bash
-source ~/envYoloMind2S/bin/activate
-./tools/benchmark_devices.py --model yolov8n.pt --source 0 --frames 120
+python ./tools/benchmark_devices.py --model yolov8n.pt --source 0 --frames 120
 ```
 
-## Notes & known gotchas
+---
 
-- **OpenVINO device switching:** Some Ultralytics + OpenVINO setups historically had issues where the first inference “locks” the device selection; safest approach is to run one process per device choice (restart to change). citeturn8view2
+## Notes
+
+- **OpenVINO export + INT8:** Ultralytics uses `nncf` to produce INT8 models; this repo includes it in `requirements-openvino.txt`.
+- **One process per device:** safest way to switch devices is to restart the script.
+
+---
 
 ## Project layout
 
@@ -120,8 +131,11 @@ source ~/envYoloMind2S/bin/activate
 - `yolo_detect.py` – CLI
 - `yolo_web.py` – web stream
 - `src/yolov8_mind2s/` – core package code
-- `scripts/` – setup + run helpers
-- `legacy/` – wrappers that match your original filenames
+- `scripts/` – Ubuntu setup + run helpers
+- `tools/` – benchmark tool
+- `legacy/` + `systemd/` – placeholders for future wrappers/services
+
+---
 
 ## License
 

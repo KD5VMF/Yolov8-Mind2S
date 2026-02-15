@@ -8,7 +8,7 @@ from typing import List
 
 import cv2  # type: ignore
 
-from yolov8_mind2s.devices import available_devices, pick_default_device
+from yolov8_mind2s.devices import available_devices
 from yolov8_mind2s.model import load_model
 
 
@@ -30,30 +30,25 @@ def main(argv=None) -> int:
         else:
             test = [x.strip() for x in args.devices.split(",") if x.strip()]
     else:
-        # Sensible default ordering
-        test = []
-        for cand in ("cuda:0", "intel:npu", "intel:gpu", "intel:cpu", "cpu"):
-            if cand in devs:
-                test.append(cand)
+        test = [cand for cand in ("cuda:0", "intel:npu", "intel:gpu", "intel:cpu", "cpu") if cand in devs]
 
-    # Capture
     try:
         src = int(args.source)
     except ValueError:
         src = args.source
+
     cap = cv2.VideoCapture(src)
     if not cap.isOpened():
         raise SystemExit(f"Could not open source {args.source!r}")
-
     ok, frame = cap.read()
     if not ok:
         raise SystemExit("Could not read first frame.")
 
     print("Benchmarking:")
-    print(f"  model:   {args.model}")
-    print(f"  source:  {args.source}")
-    print(f"  imgsz:   {args.imgsz}")
-    print(f"  frames:  {args.frames} (warmup {args.warmup})")
+    print(f" model:  {args.model}")
+    print(f" source: {args.source}")
+    print(f" imgsz:  {args.imgsz}")
+    print(f" frames: {args.frames} (warmup {args.warmup})")
     print()
 
     best = None
@@ -63,7 +58,6 @@ def main(argv=None) -> int:
         print(f"== {dev} ==")
         model, pred_dev = load_model(args.model, device=dev, prefer_int8_on_npu=args.prefer_int8_on_npu, imgsz=args.imgsz)
 
-        # Warmup
         for _ in range(args.warmup):
             model.predict(source=frame, imgsz=args.imgsz, device=pred_dev, verbose=False)
 
@@ -77,14 +71,14 @@ def main(argv=None) -> int:
             times.append(time.perf_counter() - t0)
 
         if not times:
-            print("  no frames measured")
+            print(" no frames measured")
             continue
 
         avg = statistics.mean(times)
         fps = 1.0 / avg if avg > 0 else 0.0
         p95 = statistics.quantiles(times, n=20)[-1]
-        print(f"  avg: {avg*1000:.1f} ms  (~{fps:.1f} fps)")
-        print(f"  p95: {p95*1000:.1f} ms")
+        print(f" avg: {avg*1000:.1f} ms (~{fps:.1f} fps)")
+        print(f" p95: {p95*1000:.1f} ms")
         print()
 
         if fps > best_fps:
@@ -92,7 +86,7 @@ def main(argv=None) -> int:
             best = dev
 
     cap.release()
-    print(f"Best: {best}  (~{best_fps:.1f} fps)")
+    print(f"Best: {best} (~{best_fps:.1f} fps)")
     return 0
 
 

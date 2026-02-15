@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import platform
 from dataclasses import dataclass
 from typing import List, Optional
@@ -50,16 +49,13 @@ def available_devices() -> List[DeviceInfo]:
         for i in range(max(n, 1)):
             devices.append(DeviceInfo(name=f"cuda:{i}", kind="cuda", detail="NVIDIA CUDA"))
 
-    # Intel OpenVINO devices (CPU/GPU/NPU) exposed by OpenVINO Runtime.
+    # Intel OpenVINO devices
     ov_devs = _openvino_devices()
-    # OpenVINO uses names like "CPU", "GPU", "NPU" etc.
-    # We present them in Ultralytics' device string format: intel:cpu/intel:gpu/intel:npu.
     map_ov = {"CPU": "intel:cpu", "GPU": "intel:gpu", "NPU": "intel:npu"}
     for d in ov_devs:
         if d in map_ov:
             devices.append(DeviceInfo(name=map_ov[d], kind="intel", detail=f"OpenVINO {d}"))
         else:
-            # Keep unknown OpenVINO devices discoverable.
             devices.append(DeviceInfo(name=f"openvino:{d}", kind="intel", detail=f"OpenVINO {d}"))
 
     return devices
@@ -67,6 +63,7 @@ def available_devices() -> List[DeviceInfo]:
 
 def pick_default_device(prefer: Optional[str] = None) -> str:
     """Choose a sensible default.
+
     Priority (unless prefer is set):
       1) CUDA (if present)
       2) Intel NPU (if present)

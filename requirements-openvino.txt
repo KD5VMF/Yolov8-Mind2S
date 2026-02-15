@@ -1,2 +1,5 @@
 # Optional: Intel CPU/GPU/NPU acceleration via OpenVINO
 openvino>=2024.0.0
+
+# Needed for INT8 OpenVINO export in Ultralytics (quantization)
+nncf>=2.14.0

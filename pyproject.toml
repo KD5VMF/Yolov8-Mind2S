@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yolov8-mind2s"
-version = "1.0.0"
+version = "1.0.1"
 description = "YOLOv8 real-time detection tuned for Khadas Mind 2S (Intel CPU/GPU/NPU) + optional NVIDIA CUDA"
 readme = "README.md"
 requires-python = ">=3.9"

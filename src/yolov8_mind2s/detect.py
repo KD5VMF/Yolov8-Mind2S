@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import queue
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np  # type: ignore
 
-from .devices import pick_default_device
-from .model import load_model
+from .devices import available_devices, pick_default_device
+from .model import get_class_names, load_model
 from .utils import FpsCounter, ensure_dir, letterbox_to_screen, stable_color_for_class
 
 
@@ -27,10 +25,9 @@ class Detection:
 
 
 class FrameGrabber(threading.Thread):
-    def __init__(self, cap, *, drop_old: bool = True):
+    def __init__(self, cap):
         super().__init__(daemon=True)
         self.cap = cap
-        self.drop_old = drop_old
         self._lock = threading.Lock()
         self._frame: Optional[np.ndarray] = None
         self._ts: float = 0.0
@@ -59,13 +56,11 @@ class FrameGrabber(threading.Thread):
 def _open_capture(source: str, width: int, height: int, fps: int):
     import cv2  # type: ignore
 
-    # Source may be int webcam index.
     try:
         src = int(source)
     except ValueError:
         src = source
 
-    # Prefer V4L2 on Linux.
     backend = cv2.CAP_V4L2 if sys.platform.startswith("linux") else 0
     cap = cv2.VideoCapture(src, backend)
 
@@ -76,7 +71,6 @@ def _open_capture(source: str, width: int, height: int, fps: int):
     if fps > 0:
         cap.set(cv2.CAP_PROP_FPS, float(fps))
 
-    # Reduce latency if supported.
     try:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1.0)
     except Exception:
@@ -98,6 +92,7 @@ def _screen_size() -> Tuple[int, int]:
 
 def _draw_detections(img: np.ndarray, dets: Sequence[Detection], *, show_labels: bool = True) -> np.ndarray:
     import cv2  # type: ignore
+
     out = img
     for d in dets:
         x1, y1, x2, y2 = d.xyxy
@@ -108,7 +103,8 @@ def _draw_detections(img: np.ndarray, dets: Sequence[Detection], *, show_labels:
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             y = max(0, y1 - th - 6)
             cv2.rectangle(out, (x1, y), (x1 + tw + 6, y1), color, -1)
-            cv2.putText(out, label, (x1 + 3, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
+            cv2.putText(out, label, (x1 + 3, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
     return out
 
 
@@ -117,13 +113,12 @@ def _results_to_detections(result, names: Dict[int, str]) -> List[Detection]:
     boxes = getattr(result, "boxes", None)
     if boxes is None:
         return dets
-    # boxes.xyxy is Nx4, boxes.cls is Nx1, boxes.conf is Nx1
+
     try:
         xyxy = boxes.xyxy.cpu().numpy()
         cls = boxes.cls.cpu().numpy()
         conf = boxes.conf.cpu().numpy()
     except Exception:
-        # OpenVINO path may already be numpy
         xyxy = np.array(boxes.xyxy)
         cls = np.array(boxes.cls)
         conf = np.array(boxes.conf)
@@ -131,7 +126,12 @@ def _results_to_detections(result, names: Dict[int, str]) -> List[Detection]:
     for i in range(len(xyxy)):
         x1, y1, x2, y2 = [int(v) for v in xyxy[i].tolist()]
         cid = int(cls[i])
-        dets.append(Detection(cls_id=cid, name=str(names.get(cid, cid)), conf=float(conf[i]), xyxy=(x1, y1, x2, y2)))
+        dets.append(Detection(
+            cls_id=cid,
+            name=str(names.get(cid, cid)),
+            conf=float(conf[i]),
+            xyxy=(x1, y1, x2, y2),
+        ))
     return dets
 
 
@@ -159,29 +159,28 @@ def run_detect(
 ) -> int:
     import cv2  # type: ignore
 
-    device = device or pick_default_device()
+    device = (device or "").strip() or pick_default_device()
     model, pred_device = load_model(model_id, device=device, prefer_int8_on_npu=prefer_int8_on_npu, imgsz=imgsz)
-
-    names: Dict[int, str] = getattr(model, "names", {}) or {}
+    names = get_class_names(model)
 
     cap = _open_capture(source, width, height, cam_fps)
     grabber = FrameGrabber(cap)
     grabber.start()
 
-    out_path = None
-    writer = None
     out_dir_p = ensure_dir(Path(out_dir))
     ts = time.strftime("%Y%m%d_%H%M%S")
+
+    writer = None
+    out_path = None
     if save_video:
         out_path = out_dir_p / f"detect_{ts}.mp4"
-        # Try to get actual capture size.
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0) or (width if width > 0 else 1280)
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0) or (height if height > 0 else 720)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(out_path), fourcc, 30.0, (w, h))
 
-    json_path = None
     jf = None
+    json_path = None
     if save_json:
         json_path = out_dir_p / f"detections_{ts}.jsonl"
         jf = json_path.open("w", encoding="utf-8")
@@ -202,16 +201,13 @@ def run_detect(
             if frame is None:
                 time.sleep(0.01)
                 continue
-
-            # Avoid reprocessing same frame.
             if fts == last_ts:
                 time.sleep(0.001)
                 continue
             last_ts = fts
+
             fps_cap.tick()
 
-            # Inference
-            t0 = time.perf_counter()
             results = model.predict(
                 source=frame,
                 imgsz=imgsz,
@@ -223,18 +219,16 @@ def run_detect(
                 half=bool(half),
                 verbose=False,
             )
+
             fps_inf.tick()
             result = results[0] if isinstance(results, list) and results else results
-
             dets = _results_to_detections(result, names)
-
             annotated = _draw_detections(frame, dets)
 
             if overlay_fps:
-                cap_f = fps_cap.fps
-                inf_f = fps_inf.fps
-                txt = f"cap {cap_f:5.1f} fps | inf {inf_f:5.1f} fps | device {device}"
-                cv2.putText(annotated, txt, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+                txt = f"cap {fps_cap.fps:5.1f} fps | inf {fps_inf.fps:5.1f} fps | device {device}"
+                cv2.putText(annotated, txt, (10, 28),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
             if writer is not None:
                 writer.write(annotated)
@@ -243,10 +237,7 @@ def run_detect(
                 payload = {
                     "ts": fts,
                     "device": device,
-                    "detections": [
-                        {"cls": d.cls_id, "name": d.name, "conf": d.conf, "xyxy": list(d.xyxy)}
-                        for d in dets
-                    ],
+                    "detections": [{"cls": d.cls_id, "name": d.name, "conf": d.conf, "xyxy": list(d.xyxy)} for d in dets],
                 }
                 jf.write(json.dumps(payload) + "\n")
                 jf.flush()
@@ -255,7 +246,7 @@ def run_detect(
                 view = letterbox_to_screen(annotated, screen_w, screen_h) if fullscreen else annotated
                 cv2.imshow("YOLOv8", view)
                 k = cv2.waitKey(1) & 0xFF
-                if k in (ord("q"), 27):  # q or ESC
+                if k in (ord("q"), 27):
                     break
     finally:
         grabber.stop()
@@ -278,6 +269,7 @@ def run_detect(
         print(f"[OK] Saved video: {out_path}")
     if json_path:
         print(f"[OK] Saved detections: {json_path}")
+
     return 0
 
 
@@ -310,7 +302,6 @@ def build_argparser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    from .devices import available_devices
     from .utils import parse_class_selection
 
     args = build_argparser().parse_args(argv)
@@ -318,7 +309,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.list_devices:
         print("Detected devices:")
         for d in available_devices():
-            print(f"  - {d.name:12}  ({d.detail})")
+            print(f" - {d.name:12} ({d.detail})")
         return 0
 
     device = args.device.strip() or pick_default_device()
@@ -327,11 +318,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     classes = None
     if args.classes.strip():
-        # Need names count; easiest is to parse after model load, but we want validation early.
-        # We'll parse conservatively: assume COCO 80 if unknown.
-        n = 80
         try:
-            classes = parse_class_selection(args.classes, n_classes=n)
+            classes = parse_class_selection(args.classes, n_classes=80)
         except Exception as e:
             print(f"[WARN] Class selection parse failed: {e}. Falling back to ALL.")
             classes = None
