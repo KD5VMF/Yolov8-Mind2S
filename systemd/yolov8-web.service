@@ -1,0 +1,15 @@
+[Unit]
+Description=YOLOv8 Mind2S Web Detect (MJPEG)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO_DIR__
+ExecStart=__ENV_PY__ __REPO_DIR__/yolo_web.py --host 0.0.0.0 --port 8000 --device auto --source 0 --model yolov8x.pt
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
